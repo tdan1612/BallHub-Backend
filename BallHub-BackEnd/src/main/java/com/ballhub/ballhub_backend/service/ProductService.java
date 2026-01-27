@@ -6,9 +6,11 @@ import com.ballhub.ballhub_backend.exception.BadRequestException;
 import com.ballhub.ballhub_backend.exception.ResourceNotFoundException;
 import com.ballhub.ballhub_backend.entity.*;
 import com.ballhub.ballhub_backend.repository.*;
+import com.ballhub.ballhub_backend.repository.spec.ProductSpecification;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
@@ -62,6 +64,40 @@ public class ProductService {
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm không tồn tại"));
         return mapToDetailResponse(product);
     }
+
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> filterProducts(
+            List<String> categories,
+            List<String> teams,
+            List<String> sizes,
+            BigDecimal minPrice,
+            BigDecimal maxPrice,
+            String sort,
+            Pageable pageable
+    ) {
+
+        categories = (categories == null || categories.isEmpty()) ? null : categories;
+        teams = (teams == null || teams.isEmpty()) ? null : teams;
+        sizes = (sizes == null || sizes.isEmpty()) ? null : sizes;
+
+        Page<Product> pageData = productRepository.filterNativeShop(
+                categories, teams, sizes,
+                minPrice, maxPrice,
+                sort, pageable
+        );
+
+        List<ProductResponse> list = pageData.getContent().stream()
+                .map(this::mapToListResponse)
+                .toList();
+
+        return new org.springframework.data.domain.PageImpl<>(
+                list,
+                pageable,
+                pageData.getTotalElements()
+        );
+    }
+
+
 
     public ProductDetailResponse createProduct(CreateProductRequest request) {
         // Validate category
@@ -215,7 +251,11 @@ public class ProductService {
 
     // Mapping methods
     private ProductResponse mapToListResponse(Product product) {
-        List<ProductVariant> variants = product.getVariants();
+
+        List<ProductVariant> variants = product.getVariants().stream()
+                .filter(v -> Boolean.TRUE.equals(v.getStatus()))
+                .filter(v -> v.getStockQuantity() != null && v.getStockQuantity() > 0)
+                .toList();
 
         BigDecimal minPrice = variants.stream()
                 .map(ProductVariant::getFinalPrice)

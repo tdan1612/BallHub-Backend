@@ -18,6 +18,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.util.List;
+
 @RestController
 @RequestMapping("/api")
 public class ProductController {
@@ -42,6 +45,28 @@ public class ProductController {
 
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(products)));
     }
+
+    @GetMapping("/products/filter")
+    public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> filterProducts(
+            @RequestParam(required = false) List<String> categories,
+            @RequestParam(required = false) List<String> teams,
+            @RequestParam(required = false) List<String> sizes,
+            @RequestParam(required = false) BigDecimal minPrice,
+            @RequestParam(required = false) BigDecimal maxPrice,
+            @RequestParam(defaultValue = "new") String sort,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "12") int size
+    ) {
+
+        Pageable pageable = PageRequest.of(page, size);
+
+        Page<ProductResponse> products = productService.filterProducts(
+                categories, teams, sizes, minPrice, maxPrice, sort, pageable
+        );
+
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.of(products)));
+    }
+
 
     // PUBLIC - Search products
     @PostMapping("/products/search")
