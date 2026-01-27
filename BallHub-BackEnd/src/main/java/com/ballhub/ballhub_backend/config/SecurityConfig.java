@@ -42,6 +42,12 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+
+                                // ✅ STATIC FILES (CỰC KỲ QUAN TRỌNG)
+                                .requestMatchers(
+                                        "/img/**"
+                                ).permitAll()
+
                                 // Auth endpoints
                                 .requestMatchers("/api/auth/**").permitAll()
 
