@@ -57,6 +57,9 @@ public class SecurityConfig {
                                 .requestMatchers("/api/brands/**").permitAll()
                                 .requestMatchers("/api/test/**").permitAll()
 
+                                .requestMatchers("/api/users/me").authenticated()
+                                .requestMatchers("/api/users/update").authenticated()
+
                                 // Admin endpoints
                                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
