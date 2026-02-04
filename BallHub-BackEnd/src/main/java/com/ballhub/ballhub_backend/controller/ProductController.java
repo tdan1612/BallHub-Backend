@@ -46,6 +46,7 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(products)));
     }
 
+
     @GetMapping("/products/filter")
     public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> filterProducts(
             @RequestParam(required = false) List<String> categories,

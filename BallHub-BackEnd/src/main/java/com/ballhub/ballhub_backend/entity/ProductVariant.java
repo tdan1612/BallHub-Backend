@@ -8,11 +8,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "ProductVariants",
+@Table(
+        name = "ProductVariants",
         uniqueConstraints = @UniqueConstraint(
                 name = "UQ_ProductVariant",
                 columnNames = {"ProductID", "SizeID", "ColorID"}
-        ))
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -29,11 +31,11 @@ public class ProductVariant {
     @JoinColumn(name = "ProductID", nullable = false)
     private Product product;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "SizeID", nullable = false)
     private Size size;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "ColorID", nullable = false)
     private Color color;
 
@@ -55,7 +57,7 @@ public class ProductVariant {
     @OneToMany(mappedBy = "variant", fetch = FetchType.LAZY)
     private List<ProductImage> images = new ArrayList<>();
 
-    // Business methods
+    // ===== BUSINESS =====
     public BigDecimal getFinalPrice() {
         return discountPrice != null ? discountPrice : price;
     }
@@ -72,6 +74,8 @@ public class ProductVariant {
     }
 
     public void increaseStock(Integer quantity) {
-        this.stockQuantity = (this.stockQuantity != null ? this.stockQuantity : 0) + quantity;
+        this.stockQuantity =
+                (this.stockQuantity != null ? this.stockQuantity : 0) + quantity;
     }
 }
+

@@ -1,6 +1,8 @@
 package com.ballhub.ballhub_backend.repository;
 
 import com.ballhub.ballhub_backend.entity.Product;
+import com.ballhub.ballhub_backend.entity.ProductContent;
+import com.ballhub.ballhub_backend.entity.ProductImage;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -17,17 +19,17 @@ import java.util.Optional;
 public interface ProductRepository
         extends JpaRepository<Product, Integer>, JpaSpecificationExecutor<Product> {
 
-    // =========================
+    // =====================================================
     // BASIC
-    // =========================
+    // =====================================================
 
     Page<Product> findByStatusTrue(Pageable pageable);
 
     Optional<Product> findByProductIdAndStatusTrue(Integer id);
 
-    // =========================
+    // =====================================================
     // SEARCH
-    // =========================
+    // =====================================================
 
     @Query("""
         SELECT p FROM Product p
@@ -43,9 +45,9 @@ public interface ProductRepository
             Pageable pageable
     );
 
-    // =========================
-    // SORT ONLY (OPTIONAL)
-    // =========================
+    // =====================================================
+    // SORT ONLY
+    // =====================================================
 
     @Query("""
         SELECT p FROM Product p
@@ -69,9 +71,35 @@ public interface ProductRepository
     """)
     Page<Product> findAllOrderByMinPriceDesc(Pageable pageable);
 
-    // =========================
+    // =====================================================
+    // PRODUCT DETAIL (FIX MULTIPLE BAG FETCH)
+    // =====================================================
+
+    /**
+     * Lấy product + variants
+     * ❗ KHÔNG fetch images ở đây
+     */
+    @Query("""
+        SELECT DISTINCT p FROM Product p
+        LEFT JOIN FETCH p.variants v
+        WHERE p.productId = :id
+          AND p.status = true
+    """)
+    Optional<Product> findProductWithVariants(@Param("id") Integer id);
+
+    // =====================================================
+    // PRODUCT IMAGES (QUERY RIÊNG)
+    // =====================================================
+
+    @Query("""
+        SELECT i FROM ProductImage i
+        WHERE i.product.productId = :productId
+    """)
+    List<ProductImage> findImagesByProductId(@Param("productId") Integer productId);
+
+    // =====================================================
     // FILTER + SORT + PAGING (SHOP CORE)
-    // =========================
+    // =====================================================
 
     @Query(value = """
         SELECT p.* FROM Products p
@@ -87,12 +115,11 @@ public interface ProductRepository
           AND (:teams IS NULL OR b.BrandName IN (:teams))
           AND (:sizes IS NULL OR s.SizeName IN (:sizes))
 
-          -- ✅ price filter chuẩn shop
           AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
           AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
 
-        GROUP BY p.ProductID, p.ProductName, p.Description, p.CategoryID,
-                 p.BrandID, p.Status, p.CreatedAt
+        GROUP BY p.ProductID, p.ProductName, p.Description,
+                 p.CategoryID, p.BrandID, p.Status, p.CreatedAt
 
         ORDER BY
           CASE WHEN :sort = 'new' THEN p.CreatedAt END DESC,

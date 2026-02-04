@@ -41,11 +41,33 @@ public class Product {
     @Column(name = "CreatedAt", updatable = false)
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    // ===== VARIANTS =====
+    @OneToMany(
+            mappedBy = "product",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY
+    )
     @Builder.Default
     private List<ProductVariant> variants = new ArrayList<>();
 
-    @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    // ===== CONTENT (Description / Highlight / Spec) =====
+    @OneToMany(
+            mappedBy = "product",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY
+    )
+    @Builder.Default
+    private List<ProductContent> contents = new ArrayList<>();
+
+    // ===== IMAGES =====
+    @OneToMany(
+            mappedBy = "product",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY
+    )
     @Builder.Default
     private List<ProductImage> images = new ArrayList<>();
 
@@ -54,3 +76,4 @@ public class Product {
         createdAt = LocalDateTime.now();
     }
 }
+

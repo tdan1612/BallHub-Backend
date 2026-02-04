@@ -7,6 +7,8 @@ import com.ballhub.ballhub_backend.exception.ResourceNotFoundException;
 import com.ballhub.ballhub_backend.entity.*;
 import com.ballhub.ballhub_backend.repository.*;
 import com.ballhub.ballhub_backend.repository.spec.ProductSpecification;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -14,6 +16,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -40,6 +43,12 @@ public class ProductService {
     private ProductVariantRepository variantRepository;
 
     @Autowired
+    private ProductContentRepository productContentRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
     private ProductImageRepository imageRepository;
 
     @Transactional(readOnly = true)
@@ -60,10 +69,28 @@ public class ProductService {
 
     @Transactional(readOnly = true)
     public ProductDetailResponse getProductById(Integer id) {
-        Product product = productRepository.findByProductIdAndStatusTrue(id)
+
+        Product product = productRepository.findProductWithVariants(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm không tồn tại"));
-        return mapToDetailResponse(product);
+
+        // images
+        List<ProductImage> images =
+                productRepository.findImagesByProductId(id);
+        product.setImages(images);
+
+        List<ProductContent> contents =
+                productContentRepository.findByProduct_ProductIdAndStatusTrueOrderBySortOrderAsc(id);
+
+        ProductContentBlock contentBlock =
+                mapToContentBlock(contents);
+
+        ProductDetailResponse response = mapToDetailResponse(product);
+
+        response.setContentBlock(contentBlock);
+
+        return response;
     }
+
 
     @Transactional(readOnly = true)
     public Page<ProductResponse> filterProducts(
@@ -96,8 +123,6 @@ public class ProductService {
                 pageData.getTotalElements()
         );
     }
-
-
 
     public ProductDetailResponse createProduct(CreateProductRequest request) {
         // Validate category
@@ -290,24 +315,93 @@ public class ProductService {
     }
 
     private ProductDetailResponse mapToDetailResponse(Product product) {
-        List<VariantResponse> variants = product.getVariants().stream()
-                .map(this::mapToVariantResponse)
-                .collect(Collectors.toList());
 
+        List<VariantResponse> variants = product.getVariants().stream()
+                .filter(v -> Boolean.TRUE.equals(v.getStatus()))
+                .map(v -> VariantResponse.builder()
+                        .variantId(v.getVariantId())
+                        .productId(product.getProductId())
+                        .sizeId(v.getSize().getSizeId())
+                        .sizeName(v.getSize().getSizeName())
+                        .colorId(v.getColor().getColorId())
+                        .colorName(v.getColor().getColorName())
+                        .price(v.getPrice())
+                        .discountPrice(v.getDiscountPrice())
+                        .finalPrice(v.getFinalPrice())
+                        .stockQuantity(v.getStockQuantity())
+                        .status(v.getStatus())
+                        .sku(v.getSku())
+                        .build()
+                ).toList();
+
+        // ===== PRICE RANGE =====
+        BigDecimal minPrice = variants.stream()
+                .map(VariantResponse::getFinalPrice)
+                .min(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+
+        BigDecimal maxPrice = variants.stream()
+                .map(VariantResponse::getFinalPrice)
+                .max(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+
+        // ===== IMAGES =====
         List<ProductImageResponse> images = product.getImages().stream()
-                .map(this::mapToImageResponse)
-                .collect(Collectors.toList());
+                .map(i -> ProductImageResponse.builder()
+                        .imageId(i.getImageId())
+                        .productId(product.getProductId())
+                        .variantId(i.getVariant() != null ? i.getVariant().getVariantId() : null)
+                        .imageUrl(i.getImageUrl())
+                        .isMain(i.getIsMain())
+                        .build()
+                ).toList();
+
+        // ===== SIZE OPTIONS =====
+        List<SizeOptionResponse> sizeOptions = variants.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        VariantResponse::getSizeId
+                ))
+                .entrySet().stream()
+                .map(e -> SizeOptionResponse.builder()
+                        .sizeId(e.getKey())
+                        .sizeName(e.getValue().get(0).getSizeName())
+                        .available(
+                                e.getValue().stream()
+                                        .anyMatch(v -> v.getStockQuantity() != null && v.getStockQuantity() > 0)
+                        )
+                        .build()
+                ).toList();
+
+        // ===== COLOR OPTIONS =====
+        List<ColorOptionResponse> colorOptions = variants.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        VariantResponse::getColorId
+                ))
+                .entrySet().stream()
+                .map(e -> ColorOptionResponse.builder()
+                        .colorId(e.getKey())
+                        .colorName(e.getValue().get(0).getColorName())
+                        .available(
+                                e.getValue().stream()
+                                        .anyMatch(v -> v.getStockQuantity() != null && v.getStockQuantity() > 0)
+                        )
+                        .build()
+                ).toList();
 
         return ProductDetailResponse.builder()
                 .productId(product.getProductId())
                 .productName(product.getProductName())
                 .description(product.getDescription())
-                .categoryId(product.getCategory() != null ? product.getCategory().getCategoryId() : null)
-                .categoryName(product.getCategory() != null ? product.getCategory().getCategoryName() : null)
-                .brandId(product.getBrand() != null ? product.getBrand().getBrandId() : null)
-                .brandName(product.getBrand() != null ? product.getBrand().getBrandName() : null)
+                .categoryId(product.getCategory().getCategoryId())
+                .categoryName(product.getCategory().getCategoryName())
+                .brandId(product.getBrand().getBrandId())
+                .brandName(product.getBrand().getBrandName())
                 .variants(variants)
                 .images(images)
+                .sizeOptions(sizeOptions)
+                .colorOptions(colorOptions)
+                .minPrice(minPrice)
+                .maxPrice(maxPrice)
                 .status(product.getStatus())
                 .createdAt(product.getCreatedAt())
                 .build();
@@ -329,6 +423,56 @@ public class ProductService {
                 .status(variant.getStatus())
                 .build();
     }
+
+    private ProductContentBlock mapToContentBlock(List<ProductContent> contents) {
+
+        DescriptionBlock description = null;
+        List<String> highlights = List.of();
+        List<SpecItem> specs = List.of();
+
+        for (ProductContent c : contents) {
+
+            if (!Boolean.TRUE.equals(c.getStatus())) continue;
+
+            switch (c.getType()) {
+
+                case DESCRIPTION -> {
+                    description = DescriptionBlock.builder()
+                            .html(c.getContent())
+                            .build();
+                }
+
+                case HIGHLIGHT -> {
+                    try {
+                        highlights = objectMapper.readValue(
+                                c.getContent(),
+                                new TypeReference<List<String>>() {}
+                        );
+                    } catch (Exception e) {
+                        throw new RuntimeException("Parse HIGHLIGHT failed", e);
+                    }
+                }
+
+                case SPEC -> {
+                    try {
+                        specs = objectMapper.readValue(
+                                c.getContent(),
+                                new TypeReference<List<SpecItem>>() {}
+                        );
+                    } catch (Exception e) {
+                        throw new RuntimeException("Parse SPEC failed", e);
+                    }
+                }
+            }
+        }
+
+        return ProductContentBlock.builder()
+                .description(description)
+                .highlights(highlights)
+                .specs(specs)
+                .build();
+    }
+
 
     private ProductImageResponse mapToImageResponse(ProductImage image) {
         return ProductImageResponse.builder()

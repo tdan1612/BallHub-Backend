@@ -25,9 +25,10 @@ public class ProductImage {
     @JoinColumn(name = "VariantID")
     private ProductVariant variant;
 
-    @Column(name = "ImageUrl", length = 255)
+    @Column(name = "ImageUrl", length = 255, nullable = false)
     private String imageUrl;
 
     @Column(name = "IsMain")
     private Boolean isMain = false;
 }
+
