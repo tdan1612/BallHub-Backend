@@ -2,6 +2,7 @@ package com.ballhub.ballhub_backend.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -31,7 +32,8 @@ public class Review {
     @Column(name = "Comment")
     private String comment;
 
-    @Column(name = "CreatedAt")
+    @CreationTimestamp
+    @Column(name = "CreatedAt", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @Column(name = "Status")

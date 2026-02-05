@@ -8,6 +8,7 @@ import com.ballhub.ballhub_backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -52,18 +53,20 @@ public class ReviewService {
             throw new RuntimeException("Rating phải từ 1 đến 5");
         }
 
-        // 1 user chỉ review 1 lần / 1 sản phẩm
         if (reviewRepo.existsByProductIdAndUserId(productId, userId)) {
             throw new RuntimeException("Bạn đã đánh giá sản phẩm này rồi");
         }
+
+        String safeComment = (comment == null) ? null : comment.trim();
 
         Review saved = reviewRepo.save(
                 Review.builder()
                         .productId(productId)
                         .userId(userId)
                         .rating(rating)
-                        .comment(comment.trim())
+                        .comment(safeComment)
                         .status(true)
+                        .createdAt(LocalDateTime.now())
                         .build()
         );
 
