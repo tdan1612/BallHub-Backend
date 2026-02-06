@@ -28,6 +28,7 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
+
     // PUBLIC - Get all products (with pagination)
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> getAllProducts(
@@ -54,15 +55,15 @@ public class ProductController {
             @RequestParam(required = false) List<String> sizes,
             @RequestParam(required = false) BigDecimal minPrice,
             @RequestParam(required = false) BigDecimal maxPrice,
+            @RequestParam(required = false) String search, // ✅ thêm
             @RequestParam(defaultValue = "new") String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
-
         Pageable pageable = PageRequest.of(page, size);
 
         Page<ProductResponse> products = productService.filterProducts(
-                categories, teams, sizes, minPrice, maxPrice, sort, pageable
+                categories, teams, sizes, minPrice, maxPrice, search, sort, pageable
         );
 
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(products)));

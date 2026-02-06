@@ -99,6 +99,7 @@ public class ProductService {
             List<String> sizes,
             BigDecimal minPrice,
             BigDecimal maxPrice,
+            String search,
             String sort,
             Pageable pageable
     ) {
@@ -107,9 +108,12 @@ public class ProductService {
         teams = (teams == null || teams.isEmpty()) ? null : teams;
         sizes = (sizes == null || sizes.isEmpty()) ? null : sizes;
 
+        if (search != null && search.trim().isEmpty()) search = null;
+
         Page<Product> pageData = productRepository.filterNativeShop(
                 categories, teams, sizes,
                 minPrice, maxPrice,
+                search,
                 sort, pageable
         );
 

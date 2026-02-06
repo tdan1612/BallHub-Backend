@@ -102,49 +102,67 @@ public interface ProductRepository
     // =====================================================
 
     @Query(value = """
-        SELECT p.* FROM Products p
-        JOIN ProductVariants v ON p.ProductID = v.ProductID
-        JOIN Categories c ON p.CategoryID = c.CategoryID
-        JOIN Brands b ON p.BrandID = b.BrandID
-        JOIN Sizes s ON v.SizeID = s.SizeID
-        WHERE p.Status = 1
-          AND v.Status = 1
-          AND v.StockQuantity > 0
+    SELECT p.* FROM Products p
+    JOIN ProductVariants v ON p.ProductID = v.ProductID
+    JOIN Categories c ON p.CategoryID = c.CategoryID
+    JOIN Brands b ON p.BrandID = b.BrandID
+    JOIN Sizes s ON v.SizeID = s.SizeID
+    WHERE p.Status = 1
+      AND v.Status = 1
+      AND v.StockQuantity > 0
 
-          AND (:categories IS NULL OR c.CategoryName IN (:categories))
-          AND (:teams IS NULL OR b.BrandName IN (:teams))
-          AND (:sizes IS NULL OR s.SizeName IN (:sizes))
+      AND (:categories IS NULL OR c.CategoryName IN (:categories))
+      AND (:teams IS NULL OR b.BrandName IN (:teams))
+      AND (:sizes IS NULL OR s.SizeName IN (:sizes))
 
-          AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
-          AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
+      AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
+      AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
 
-        GROUP BY p.ProductID, p.ProductName, p.Description,
-                 p.CategoryID, p.BrandID, p.Status, p.CreatedAt
+      -- ✅ SEARCH
+      AND (
+         :search IS NULL
+         OR LOWER(p.ProductName) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR LOWER(p.Description) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR LOWER(c.CategoryName) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR LOWER(b.BrandName) LIKE LOWER(CONCAT('%', :search, '%'))
+      )
 
-        ORDER BY
-          CASE WHEN :sort = 'new' THEN p.CreatedAt END DESC,
-          CASE WHEN :sort = 'price_asc' THEN MIN(COALESCE(v.DiscountPrice, v.Price)) END ASC,
-          CASE WHEN :sort = 'price_desc' THEN MIN(COALESCE(v.DiscountPrice, v.Price)) END DESC,
-          p.ProductID DESC
-        """,
+    GROUP BY p.ProductID, p.ProductName, p.Description,
+             p.CategoryID, p.BrandID, p.Status, p.CreatedAt
+
+    ORDER BY
+      CASE WHEN :sort = 'new' THEN p.CreatedAt END DESC,
+      CASE WHEN :sort = 'price_asc' THEN MIN(COALESCE(v.DiscountPrice, v.Price)) END ASC,
+      CASE WHEN :sort = 'price_desc' THEN MIN(COALESCE(v.DiscountPrice, v.Price)) END DESC,
+      p.ProductID DESC
+    """,
 
             countQuery = """
-        SELECT COUNT(DISTINCT p.ProductID)
-        FROM Products p
-        JOIN ProductVariants v ON p.ProductID = v.ProductID
-        JOIN Categories c ON p.CategoryID = c.CategoryID
-        JOIN Brands b ON p.BrandID = b.BrandID
-        JOIN Sizes s ON v.SizeID = s.SizeID
-        WHERE p.Status = 1
-          AND v.Status = 1
-          AND v.StockQuantity > 0
+    SELECT COUNT(DISTINCT p.ProductID)
+    FROM Products p
+    JOIN ProductVariants v ON p.ProductID = v.ProductID
+    JOIN Categories c ON p.CategoryID = c.CategoryID
+    JOIN Brands b ON p.BrandID = b.BrandID
+    JOIN Sizes s ON v.SizeID = s.SizeID
+    WHERE p.Status = 1
+      AND v.Status = 1
+      AND v.StockQuantity > 0
 
-          AND (:categories IS NULL OR c.CategoryName IN (:categories))
-          AND (:teams IS NULL OR b.BrandName IN (:teams))
-          AND (:sizes IS NULL OR s.SizeName IN (:sizes))
-          AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
-          AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
-        """,
+      AND (:categories IS NULL OR c.CategoryName IN (:categories))
+      AND (:teams IS NULL OR b.BrandName IN (:teams))
+      AND (:sizes IS NULL OR s.SizeName IN (:sizes))
+      AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
+      AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
+
+      -- ✅ SEARCH
+      AND (
+         :search IS NULL
+         OR LOWER(p.ProductName) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR LOWER(p.Description) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR LOWER(c.CategoryName) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR LOWER(b.BrandName) LIKE LOWER(CONCAT('%', :search, '%'))
+      )
+    """,
 
             nativeQuery = true
     )
@@ -154,6 +172,7 @@ public interface ProductRepository
             @Param("sizes") List<String> sizes,
             @Param("minPrice") BigDecimal minPrice,
             @Param("maxPrice") BigDecimal maxPrice,
+            @Param("search") String search,   // ✅ thêm
             @Param("sort") String sort,
             Pageable pageable
     );
