@@ -55,12 +55,17 @@ public class ProductController {
             @RequestParam(required = false) List<String> sizes,
             @RequestParam(required = false) BigDecimal minPrice,
             @RequestParam(required = false) BigDecimal maxPrice,
-            @RequestParam(required = false) String search, // ✅ thêm
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "new") String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
+
+        // ✅ FIX: nếu user bấm tìm mà không nhập gì
+        if (search != null && search.trim().isEmpty()) {
+            search = null;
+        }
 
         Page<ProductResponse> products = productService.filterProducts(
                 categories, teams, sizes, minPrice, maxPrice, search, sort, pageable
