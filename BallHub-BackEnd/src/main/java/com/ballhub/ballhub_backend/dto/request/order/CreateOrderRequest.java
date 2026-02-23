@@ -17,4 +17,7 @@ public class CreateOrderRequest {
     private Integer paymentMethodId;
 
     private String note;
+
+    // BỔ SUNG: Trường nhận mã giảm giá từ Frontend gửi lên
+    private String promoCode;
 }

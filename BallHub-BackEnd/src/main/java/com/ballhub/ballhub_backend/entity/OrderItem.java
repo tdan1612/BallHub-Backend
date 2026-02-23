@@ -1,4 +1,5 @@
 package com.ballhub.ballhub_backend.entity;
+
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
@@ -25,6 +26,12 @@ public class OrderItem {
     @JoinColumn(name = "VariantID", nullable = false)
     private ProductVariant variant;
 
+    // --- TRƯỜNG MỚI BỔ SUNG CHO FLASH SALE SẢN PHẨM ---
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "AppliedPromotionID")
+    private Promotion appliedPromotion; // Lưu CTKM áp dụng cho riêng sản phẩm này
+    // ---------------------------------------------------
+
     @Column(name = "Quantity", nullable = false)
     private Integer quantity;
 
@@ -42,27 +49,26 @@ public class OrderItem {
         return finalPrice.multiply(BigDecimal.valueOf(quantity));
     }
 
-    public static OrderItem fromCartItem(CartItem cartItem, Order order) {
+    // Hàm này mình để nguyên chữ ký, nhưng logic sẽ cần bạn truyền thêm
+    // thông tin Promotion từ DTO/CartItem vào khi gọi ở OrderService
+    public static OrderItem fromCartItem(CartItem cartItem, Order order, Promotion appliedPromo, BigDecimal finalPriceCalculated) {
         ProductVariant variant = cartItem.getVariant();
         BigDecimal originalPrice = variant.getPrice();
-        BigDecimal finalPrice = variant.getFinalPrice();
 
-        // Calculate discount percent
-        Integer discountPercent = 0;
-        if (variant.getDiscountPrice() != null && variant.getDiscountPrice().compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal discount = originalPrice.subtract(finalPrice);
-            discountPercent = discount.multiply(BigDecimal.valueOf(100))
-                    .divide(originalPrice, 0, java.math.RoundingMode.HALF_UP)
-                    .intValue();
+        // Tính % giảm giá nếu có
+        Integer discountPct = 0;
+        if (appliedPromo != null && appliedPromo.getDiscountPercent() != null) {
+            discountPct = appliedPromo.getDiscountPercent();
         }
 
         return OrderItem.builder()
                 .order(order)
                 .variant(variant)
+                .appliedPromotion(appliedPromo)
                 .quantity(cartItem.getQuantity())
                 .originalPrice(originalPrice)
-                .discountPercent(discountPercent)
-                .finalPrice(finalPrice)
+                .discountPercent(discountPct)
+                .finalPrice(finalPriceCalculated != null ? finalPriceCalculated : originalPrice)
                 .build();
     }
 }

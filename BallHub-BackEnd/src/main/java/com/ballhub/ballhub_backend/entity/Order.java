@@ -1,4 +1,5 @@
 package com.ballhub.ballhub_backend.entity;
+
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
@@ -36,6 +37,19 @@ public class Order {
     @JoinColumn(name = "StatusID")
     private OrderStatus status;
 
+    // --- CÁC TRƯỜNG MỚI BỔ SUNG CHO VOUCHER ---
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "PromotionID")
+    private Promotion promotion; // Mã voucher áp dụng cho đơn
+
+    @Column(name = "SubTotal", precision = 18, scale = 2)
+    private BigDecimal subTotal;
+
+    @Column(name = "DiscountAmount", precision = 18, scale = 2)
+    @Builder.Default
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+    // ------------------------------------------
+
     @Column(name = "OrderDate", updatable = false)
     private LocalDateTime orderDate;
 
@@ -53,25 +67,35 @@ public class Order {
     @PrePersist
     protected void onCreate() {
         orderDate = LocalDateTime.now();
+        if (discountAmount == null) discountAmount = BigDecimal.ZERO;
     }
 
     // Business methods
     public void updateStatus(OrderStatus newStatus, String note) {
         this.status = newStatus;
-
         OrderStatusHistory history = OrderStatusHistory.builder()
                 .order(this)
                 .status(newStatus)
                 .changedAt(LocalDateTime.now())
                 .note(note)
                 .build();
-
         statusHistory.add(history);
     }
 
+    // Đã cập nhật lại logic tính tiền
     public void calculateTotalAmount() {
-        this.totalAmount = items.stream()
+        // 1. Tính tổng tiền hàng (đã bao gồm giá sale của từng sản phẩm)
+        this.subTotal = items.stream()
                 .map(OrderItem::getSubtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // 2. Trừ đi tiền Voucher (nếu có)
+        BigDecimal safeDiscount = this.discountAmount != null ? this.discountAmount : BigDecimal.ZERO;
+        this.totalAmount = this.subTotal.subtract(safeDiscount);
+
+        // Đảm bảo tổng tiền không bị âm
+        if (this.totalAmount.compareTo(BigDecimal.ZERO) < 0) {
+            this.totalAmount = BigDecimal.ZERO;
+        }
     }
 }

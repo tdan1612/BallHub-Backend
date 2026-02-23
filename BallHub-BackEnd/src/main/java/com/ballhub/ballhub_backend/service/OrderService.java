@@ -14,7 +14,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -39,6 +41,9 @@ public class OrderService {
 
     @Autowired
     private ProductVariantRepository variantRepository;
+
+    @Autowired
+    private PromotionRepository promotionRepository;
 
     public OrderDetailResponse createOrder(Integer userId, CreateOrderRequest request) {
         // 1. Get cart
@@ -71,42 +76,91 @@ public class OrderService {
             }
         }
 
-        // 5. Get PENDING status
+        // 5. Check Voucher (PromoCode) if provided in request
+        Promotion appliedVoucher = null;
+        if (request.getPromoCode() != null && !request.getPromoCode().trim().isEmpty()) {
+            appliedVoucher = promotionRepository.findByPromoCode(request.getPromoCode())
+                    .orElseThrow(() -> new BadRequestException("Mã giảm giá không tồn tại"));
+
+            if (!appliedVoucher.isValid()) {
+                throw new BadRequestException("Mã giảm giá đã hết hạn hoặc hết lượt sử dụng");
+            }
+        }
+
+        // 6. Get PENDING status
         OrderStatus pendingStatus = statusRepository.findByStatusName("PENDING")
                 .orElseThrow(() -> new RuntimeException("OrderStatus PENDING không tồn tại"));
 
-        // 6. Create order
+        // 7. Initialize Order
         Order order = Order.builder()
                 .user(cart.getUser())
                 .address(address)
                 .paymentMethod(paymentMethod)
                 .status(pendingStatus)
+                .promotion(appliedVoucher) // Gắn Voucher vào đơn hàng
                 .build();
 
+        // Save tạm để lấy OrderID gắn cho OrderItem
         Order savedOrder = orderRepository.save(order);
 
-        // 7. Create order items and decrease stock
+        // 8. Process items, calculate product flash sales, and decrease stock
         for (CartItem cartItem : cart.getItems()) {
-            // Create order item with snapshot
-            OrderItem orderItem = OrderItem.fromCartItem(cartItem, savedOrder);
+            ProductVariant variant = cartItem.getVariant();
+
+            // Xử lý giá Flash Sale của từng sản phẩm (nếu có)
+            Promotion itemPromo = null;
+            BigDecimal finalPrice = variant.getPrice(); // Bạn có thể tính finalPrice ở đây nếu có itemPromo
+
+            // Gọi hàm fromCartItem đã được sửa ở Entity
+            OrderItem orderItem = OrderItem.fromCartItem(cartItem, savedOrder, itemPromo, finalPrice);
             savedOrder.getItems().add(orderItem);
 
-            // Decrease stock
-            cartItem.getVariant().decreaseStock(cartItem.getQuantity());
-            variantRepository.save(cartItem.getVariant());
+            // Giảm tồn kho
+            variant.decreaseStock(cartItem.getQuantity());
+            variantRepository.save(variant);
         }
 
-        // 8. Calculate total amount
-        savedOrder.calculateTotalAmount();
+        // 9. Calculate Order Total (SubTotal)
+        savedOrder.calculateTotalAmount(); // Hàm này sẽ tính SubTotal từ các OrderItem
 
-        // 9. Create status history
+        // 10. Apply Voucher Discount Logic
+        if (appliedVoucher != null) {
+            BigDecimal subTotal = savedOrder.getSubTotal();
+
+            // Kiểm tra điều kiện đơn tối thiểu
+            if (subTotal.compareTo(appliedVoucher.getMinOrderAmount()) < 0) {
+                throw new BadRequestException("Đơn hàng chưa đạt giá trị tối thiểu để dùng mã này (" + appliedVoucher.getMinOrderAmount() + ")");
+            }
+
+            BigDecimal discountAmt = BigDecimal.ZERO;
+            if ("PERCENT".equals(appliedVoucher.getDiscountType())) {
+                discountAmt = subTotal.multiply(BigDecimal.valueOf(appliedVoucher.getDiscountPercent()))
+                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                // Giới hạn số tiền giảm tối đa
+                if (appliedVoucher.getMaxDiscountAmount() != null && discountAmt.compareTo(appliedVoucher.getMaxDiscountAmount()) > 0) {
+                    discountAmt = appliedVoucher.getMaxDiscountAmount();
+                }
+            } else if ("FIXED".equals(appliedVoucher.getDiscountType())) {
+                discountAmt = appliedVoucher.getMaxDiscountAmount(); // Fixed amount lưu ở maxDiscountAmount
+            }
+
+            savedOrder.setDiscountAmount(discountAmt);
+            // Tính lại TotalAmount sau khi có Voucher
+            savedOrder.calculateTotalAmount();
+
+            // Cập nhật số lượt dùng của Voucher
+            appliedVoucher.setUsedCount(appliedVoucher.getUsedCount() + 1);
+            promotionRepository.save(appliedVoucher);
+        }
+
+        // 11. Create status history
         savedOrder.updateStatus(pendingStatus, "Đơn hàng được tạo");
 
-        // 10. Clear cart
+        // 12. Clear cart
         cart.clearCart();
         cartRepository.save(cart);
 
-        // 11. Save order
+        // 13. Save final order
         Order finalOrder = orderRepository.save(savedOrder);
 
         return mapToDetailResponse(finalOrder);
@@ -151,7 +205,9 @@ public class OrderService {
         orderRepository.save(order);
     }
 
-    // Mapping methods
+    // ============================================
+    // MAPPING METHODS
+    // ============================================
     private OrderResponse mapToResponse(Order order) {
         int totalItems = order.getItems() != null
                 ? order.getItems().stream().mapToInt(OrderItem::getQuantity).sum()
@@ -162,6 +218,8 @@ public class OrderService {
                 .userId(order.getUser().getUserId())
                 .statusName(order.getStatus().getStatusName())
                 .orderDate(order.getOrderDate())
+                .subTotal(order.getSubTotal())
+                .discountAmount(order.getDiscountAmount())
                 .totalAmount(order.getTotalAmount())
                 .totalItems(totalItems)
                 .paymentMethodName(order.getPaymentMethod().getMethodName())
@@ -187,6 +245,12 @@ public class OrderService {
                 .map(this::mapToHistoryResponse)
                 .collect(Collectors.toList());
 
+        // Lấy mã giảm giá nếu đơn này có dùng
+        String promoCodeUsed = null;
+        if (order.getPromotion() != null) {
+            promoCodeUsed = order.getPromotion().getPromoCode();
+        }
+
         return OrderDetailResponse.builder()
                 .orderId(order.getOrderId())
                 .userId(order.getUser().getUserId())
@@ -196,6 +260,9 @@ public class OrderService {
                 .paymentMethodName(order.getPaymentMethod().getMethodName())
                 .statusName(order.getStatus().getStatusName())
                 .orderDate(order.getOrderDate())
+                .subTotal(order.getSubTotal())
+                .discountAmount(order.getDiscountAmount())
+                .promoCode(promoCodeUsed)
                 .totalAmount(order.getTotalAmount())
                 .items(itemResponses)
                 .statusHistory(historyResponses)
@@ -214,6 +281,12 @@ public class OrderService {
                     .orElse(null);
         }
 
+        // Lấy tên CTKM nếu sản phẩm này được giảm giá trực tiếp
+        String promotionName = null;
+        if (item.getAppliedPromotion() != null) {
+            promotionName = item.getAppliedPromotion().getPromotionName();
+        }
+
         return OrderItemResponse.builder()
                 .orderItemId(item.getOrderItemId())
                 .variantId(variant.getVariantId())
@@ -223,12 +296,14 @@ public class OrderService {
                 .quantity(item.getQuantity())
                 .originalPrice(item.getOriginalPrice())
                 .discountPercent(item.getDiscountPercent())
+                .appliedPromotionName(promotionName)
                 .finalPrice(item.getFinalPrice())
                 .subtotal(item.getSubtotal())
                 .imageUrl(imageUrl)
                 .build();
     }
 
+    // Hàm bị thiếu đã được thêm vào đây
     private OrderStatusHistoryResponse mapToHistoryResponse(OrderStatusHistory history) {
         return OrderStatusHistoryResponse.builder()
                 .historyId(history.getHistoryId())
