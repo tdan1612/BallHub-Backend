@@ -82,20 +82,15 @@ public class Order {
         statusHistory.add(history);
     }
 
-    // Đã cập nhật lại logic tính tiền
     public void calculateTotalAmount() {
-        // 1. Tính tổng tiền hàng (đã bao gồm giá sale của từng sản phẩm)
-        this.subTotal = items.stream()
-                .map(OrderItem::getSubtotal)
+        // 1. Tính tổng tiền hàng (Sau khi từng món đã được giảm lẻ 10, 20%)
+        BigDecimal sub = items.stream()
+                .map(item -> item.getFinalPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        this.subTotal = sub;
 
-        // 2. Trừ đi tiền Voucher (nếu có)
-        BigDecimal safeDiscount = this.discountAmount != null ? this.discountAmount : BigDecimal.ZERO;
-        this.totalAmount = this.subTotal.subtract(safeDiscount);
-
-        // Đảm bảo tổng tiền không bị âm
-        if (this.totalAmount.compareTo(BigDecimal.ZERO) < 0) {
-            this.totalAmount = BigDecimal.ZERO;
-        }
+        // 2. Trừ thêm Voucher giảm giá (Nếu có)
+        BigDecimal discount = (this.discountAmount != null) ? this.discountAmount : BigDecimal.ZERO;
+        this.totalAmount = this.subTotal.subtract(discount);
     }
 }

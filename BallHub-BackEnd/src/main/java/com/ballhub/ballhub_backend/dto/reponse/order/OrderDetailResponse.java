@@ -19,6 +19,7 @@ public class OrderDetailResponse {
     private Integer userId;
     private String userFullName;
     private String userEmail;
+    private String userPhone;
     private String deliveryAddress;
     private String paymentMethodName;
     private String statusName;

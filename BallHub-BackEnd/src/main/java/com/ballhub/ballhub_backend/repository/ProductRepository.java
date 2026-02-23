@@ -72,13 +72,9 @@ public interface ProductRepository
     Page<Product> findAllOrderByMinPriceDesc(Pageable pageable);
 
     // =====================================================
-    // PRODUCT DETAIL (FIX MULTIPLE BAG FETCH)
+    // PRODUCT DETAIL
     // =====================================================
 
-    /**
-     * Lấy product + variants
-     * ❗ KHÔNG fetch images ở đây
-     */
     @Query("""
         SELECT DISTINCT p FROM Product p
         LEFT JOIN FETCH p.variants v
@@ -86,10 +82,6 @@ public interface ProductRepository
           AND p.status = true
     """)
     Optional<Product> findProductWithVariants(@Param("id") Integer id);
-
-    // =====================================================
-    // PRODUCT IMAGES (QUERY RIÊNG)
-    // =====================================================
 
     @Query("""
         SELECT i FROM ProductImage i
@@ -118,7 +110,6 @@ public interface ProductRepository
       AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
       AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
 
-      -- ✅ SEARCH
       AND (
          :search IS NULL
          OR LOWER(p.ProductName) LIKE LOWER(CONCAT('%', :search, '%'))
@@ -136,7 +127,6 @@ public interface ProductRepository
       CASE WHEN :sort = 'price_desc' THEN MIN(COALESCE(v.DiscountPrice, v.Price)) END DESC,
       p.ProductID DESC
     """,
-
             countQuery = """
     SELECT COUNT(DISTINCT p.ProductID)
     FROM Products p
@@ -154,7 +144,6 @@ public interface ProductRepository
       AND (:minPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) >= :minPrice)
       AND (:maxPrice IS NULL OR COALESCE(v.DiscountPrice, v.Price) <= :maxPrice)
 
-      -- ✅ SEARCH
       AND (
          :search IS NULL
          OR LOWER(p.ProductName) LIKE LOWER(CONCAT('%', :search, '%'))
@@ -163,7 +152,6 @@ public interface ProductRepository
          OR LOWER(b.BrandName) LIKE LOWER(CONCAT('%', :search, '%'))
       )
     """,
-
             nativeQuery = true
     )
     Page<Product> filterNativeShop(
@@ -172,8 +160,24 @@ public interface ProductRepository
             @Param("sizes") List<String> sizes,
             @Param("minPrice") BigDecimal minPrice,
             @Param("maxPrice") BigDecimal maxPrice,
-            @Param("search") String search,   // ✅ thêm
+            @Param("search") String search,
             @Param("sort") String sort,
             Pageable pageable
     );
+
+    // =====================================================
+    // FLASH SALE (DYNAMIC CHECK DB)
+    // =====================================================
+    @Query(value = """
+        SELECT MAX(pr.DiscountPercent)
+        FROM ProductVariants v
+        JOIN VariantPromotions vp ON v.VariantID = vp.VariantID
+        JOIN Promotions pr ON vp.PromotionID = pr.PromotionID
+        WHERE v.ProductID = :productId
+          AND pr.Status = 1
+          AND pr.PromoCode IS NULL
+          AND (pr.StartDate IS NULL OR pr.StartDate <= CURRENT_TIMESTAMP)
+          AND (pr.EndDate IS NULL OR pr.EndDate >= CURRENT_TIMESTAMP)
+    """, nativeQuery = true)
+    Integer findActiveFlashSalePercentByProductId(@Param("productId") Integer productId);
 }

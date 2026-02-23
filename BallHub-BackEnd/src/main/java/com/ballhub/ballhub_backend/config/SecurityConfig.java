@@ -50,6 +50,7 @@ public class SecurityConfig {
 
                                 // Auth endpoints
                                 .requestMatchers("/api/auth/**").permitAll()
+                                .requestMatchers("/uploads/**").permitAll()
 
                                 // Public endpoints
                                 .requestMatchers("/api/products/**").permitAll()

@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Table(name = "Promotions")
@@ -51,6 +52,9 @@ public class Promotion {
 
     @Column(name = "Status")
     private Boolean status;
+
+    @OneToMany(mappedBy = "promotion", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<VariantPromotion> variantPromotions;
 
     // Business method: Hàm tiện ích kiểm tra mã còn hợp lệ không
     public boolean isValid() {
