@@ -43,14 +43,16 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
 
-                                // ✅ STATIC FILES (CỰC KỲ QUAN TRỌNG)
+
                                 .requestMatchers(
                                         "/img/**"
                                 ).permitAll()
 
                                 // Auth endpoints
                                 .requestMatchers("/api/auth/**").permitAll()
+                                .requestMatchers("/api/auth/google-login").permitAll()
                                 .requestMatchers("/uploads/**").permitAll()
+
 
                                 // Public endpoints
                                 .requestMatchers("/api/products/**").permitAll()

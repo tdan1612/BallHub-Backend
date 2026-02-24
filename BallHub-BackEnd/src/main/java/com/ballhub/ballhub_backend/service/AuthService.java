@@ -15,6 +15,10 @@ import com.ballhub.ballhub_backend.security.JwtTokenProvider;
 import org.apache.coyote.BadRequestException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -22,8 +26,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Service
 @Transactional
@@ -47,13 +53,13 @@ public class AuthService {
     @Value("${jwt.refresh-token-expiration}")
     private long refreshTokenExpiration;
 
+    // --- CÁC PHƯƠNG THỨC GIỮ NGUYÊN ---
+
     public AuthResponse register(RegisterRequest request) throws BadRequestException {
-        // Check if email exists
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new BadRequestException("Email đã được sử dụng");
         }
 
-        // Create new user
         User user = User.builder()
                 .fullName(request.getFullName())
                 .email(request.getEmail())
@@ -65,7 +71,6 @@ public class AuthService {
 
         User savedUser = userRepository.save(user);
 
-        // Authenticate and generate tokens
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
         );
@@ -74,7 +79,6 @@ public class AuthService {
         String accessToken = tokenProvider.generateAccessToken(authentication);
         String refreshToken = tokenProvider.generateRefreshToken(authentication);
 
-        // Save refresh token
         saveRefreshToken(savedUser, refreshToken);
 
         return AuthResponse.builder()
@@ -85,22 +89,18 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
-        // Authenticate
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
         );
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        // Generate tokens
         String accessToken = tokenProvider.generateAccessToken(authentication);
         String refreshToken = tokenProvider.generateRefreshToken(authentication);
 
-        // Get user
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         User user = userRepository.findById(userDetails.getUserId())
                 .orElseThrow(() -> new UnauthorizedException("User not found"));
 
-        // Save refresh token
         saveRefreshToken(user, refreshToken);
 
         return AuthResponse.builder()
@@ -110,31 +110,90 @@ public class AuthService {
                 .build();
     }
 
+    public AuthResponse googleLogin(String googleAccessToken) {
+        // 1. Lấy thông tin user từ Google API
+        Map<String, Object> googleUserInfo = fetchGoogleUserInfo(googleAccessToken);
+        String email = (String) googleUserInfo.get("email");
+        String name = (String) googleUserInfo.get("name");
+
+        // 2. Tìm hoặc Tạo mới User trong hệ thống
+        User user = userRepository.findByEmail(email)
+                .orElseGet(() -> {
+                    User newUser = User.builder()
+                            .fullName(name)
+                            .email(email)
+                            .passwordHash(null)
+                            .role("CUSTOMER")
+                            .status(true)
+                            .build();
+                    return userRepository.save(newUser);
+                });
+
+        // 3. Tạo Authentication thủ công (vì không dùng password)
+        CustomUserDetails userDetails = CustomUserDetails.build(user);
+        Authentication authentication = new UsernamePasswordAuthenticationToken(
+                userDetails, null, userDetails.getAuthorities()
+        );
+
+        // Lưu vào SecurityContext
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        // 4. Sinh Token hệ thống (BallHub JWT)
+        String accessToken = tokenProvider.generateAccessToken(authentication);
+        String refreshToken = tokenProvider.generateRefreshToken(authentication);
+
+        // 5. Lưu Refresh Token vào DB
+        saveRefreshToken(user, refreshToken);
+
+        return AuthResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken)
+                .user(mapToUserResponse(user))
+                .build();
+    }
+
+    private Map<String, Object> fetchGoogleUserInfo(String accessToken) {
+        try {
+            RestTemplate restTemplate = new RestTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(accessToken);
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    "https://www.googleapis.com/oauth2/v3/userinfo",
+                    HttpMethod.GET,
+                    entity,
+                    Map.class
+            );
+
+            return (Map<String, Object>) response.getBody();
+        } catch (Exception e) {
+            throw new UnauthorizedException("Xác thực với Google thất bại hoặc Token hết hạn");
+        }
+    }
+
+    // --- CÁC PHƯƠNG THỨC HỖ TRỢ KHÁC GIỮ NGUYÊN ---
+
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         String refreshToken = request.getRefreshToken();
 
-        // Validate refresh token
         if (!tokenProvider.validateToken(refreshToken)) {
             throw new UnauthorizedException("Refresh token không hợp lệ");
         }
 
-        // Get refresh token from database
         RefreshToken storedToken = refreshTokenRepository.findByTokenAndRevokedFalse(refreshToken)
                 .orElseThrow(() -> new UnauthorizedException("Refresh token không tồn tại hoặc đã bị thu hồi"));
 
-        // Check if expired
         if (storedToken.isExpired()) {
             throw new UnauthorizedException("Refresh token đã hết hạn");
         }
 
-        // Get user and create new authentication
         User user = storedToken.getUser();
         CustomUserDetails userDetails = CustomUserDetails.build(user);
         Authentication authentication = new UsernamePasswordAuthenticationToken(
                 userDetails, null, userDetails.getAuthorities()
         );
 
-        // Generate new access token
         String newAccessToken = tokenProvider.generateAccessToken(authentication);
 
         return AuthResponse.builder()
