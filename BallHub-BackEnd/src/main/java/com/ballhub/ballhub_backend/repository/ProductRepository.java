@@ -117,6 +117,17 @@ public interface ProductRepository
          OR LOWER(c.CategoryName) LIKE LOWER(CONCAT('%', :search, '%'))
          OR LOWER(b.BrandName) LIKE LOWER(CONCAT('%', :search, '%'))
       )
+      
+      -- LOGIC LỌC HÀNG KHUYẾN MÃI (NẾU isSale = 1)
+      AND (:isSale = 0 OR p.ProductID IN (
+          SELECT v_sub.ProductID FROM ProductVariants v_sub
+          JOIN VariantPromotions vp ON v_sub.VariantID = vp.VariantID
+          JOIN Promotions pr ON vp.PromotionID = pr.PromotionID
+          WHERE pr.Status = 1 AND pr.PromoCode IS NULL
+            AND (pr.StartDate IS NULL OR pr.StartDate <= CURRENT_TIMESTAMP)
+            AND (pr.EndDate IS NULL OR pr.EndDate >= CURRENT_TIMESTAMP)
+            AND pr.DiscountPercent > 0
+      ))
 
     GROUP BY p.ProductID, p.ProductName, p.Description,
              p.CategoryID, p.BrandID, p.Status, p.CreatedAt
@@ -151,6 +162,16 @@ public interface ProductRepository
          OR LOWER(c.CategoryName) LIKE LOWER(CONCAT('%', :search, '%'))
          OR LOWER(b.BrandName) LIKE LOWER(CONCAT('%', :search, '%'))
       )
+      
+      AND (:isSale = 0 OR p.ProductID IN (
+          SELECT v_sub.ProductID FROM ProductVariants v_sub
+          JOIN VariantPromotions vp ON v_sub.VariantID = vp.VariantID
+          JOIN Promotions pr ON vp.PromotionID = pr.PromotionID
+          WHERE pr.Status = 1 AND pr.PromoCode IS NULL
+            AND (pr.StartDate IS NULL OR pr.StartDate <= CURRENT_TIMESTAMP)
+            AND (pr.EndDate IS NULL OR pr.EndDate >= CURRENT_TIMESTAMP)
+            AND pr.DiscountPercent > 0
+      ))
     """,
             nativeQuery = true
     )
@@ -162,6 +183,7 @@ public interface ProductRepository
             @Param("maxPrice") BigDecimal maxPrice,
             @Param("search") String search,
             @Param("sort") String sort,
+            @Param("isSale") Integer isSale,
             Pageable pageable
     );
 

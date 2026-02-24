@@ -44,6 +44,10 @@ public class ProductService {
     private ObjectMapper objectMapper;
     @Autowired
     private ProductImageRepository imageRepository;
+    @Autowired
+    private FavoriteRepository favoriteRepository;
+    @Autowired
+    private UserRepository userRepository;
 
     @Transactional(readOnly = true)
     public Page<ProductResponse> getAllProducts(Pageable pageable) {
@@ -81,15 +85,18 @@ public class ProductService {
     @Transactional(readOnly = true)
     public Page<ProductResponse> filterProducts(
             List<String> categories, List<String> teams, List<String> sizes,
-            BigDecimal minPrice, BigDecimal maxPrice, String search, String sort, Pageable pageable
+            BigDecimal minPrice, BigDecimal maxPrice, String search, String sort,
+            boolean isSale, Pageable pageable
     ) {
         categories = (categories == null || categories.isEmpty()) ? null : categories;
         teams = (teams == null || teams.isEmpty()) ? null : teams;
         sizes = (sizes == null || sizes.isEmpty()) ? null : sizes;
         if (search != null && search.trim().isEmpty()) search = null;
 
+        Integer isSaleParam = isSale ? 1 : 0;
+
         Page<Product> pageData = productRepository.filterNativeShop(
-                categories, teams, sizes, minPrice, maxPrice, search, sort, pageable
+                categories, teams, sizes, minPrice, maxPrice, search, sort, isSaleParam, pageable
         );
 
         List<ProductResponse> list = pageData.getContent().stream()
@@ -213,7 +220,7 @@ public class ProductService {
     // ==========================================================
     // MAPPING DATA CHO FRONTEND KÈM THEO LOGIC TÍNH FLASH SALE
     // ==========================================================
-    private ProductResponse mapToListResponse(Product product) {
+    public ProductResponse mapToListResponse(Product product) {
 
         List<ProductVariant> variants = product.getVariants().stream()
                 .filter(v -> Boolean.TRUE.equals(v.getStatus()))

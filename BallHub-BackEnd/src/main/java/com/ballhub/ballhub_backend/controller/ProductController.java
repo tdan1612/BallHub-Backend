@@ -58,7 +58,8 @@ public class ProductController {
             @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "new") String sort,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "12") int size
+            @RequestParam(defaultValue = "12") int size,
+            @RequestParam(defaultValue = "false") boolean isSale
     ) {
         Pageable pageable = PageRequest.of(page, size);
 
@@ -68,7 +69,7 @@ public class ProductController {
         }
 
         Page<ProductResponse> products = productService.filterProducts(
-                categories, teams, sizes, minPrice, maxPrice, search, sort, pageable
+                categories, teams, sizes, minPrice, maxPrice, search, sort, isSale, pageable
         );
 
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(products)));
