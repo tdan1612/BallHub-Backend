@@ -12,9 +12,12 @@ import com.ballhub.ballhub_backend.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -24,24 +27,21 @@ public class OrderService {
 
     @Autowired
     private OrderRepository orderRepository;
-
     @Autowired
     private CartRepository cartRepository;
-
     @Autowired
     private UserAddressRepository addressRepository;
-
     @Autowired
     private PaymentMethodRepository paymentMethodRepository;
-
     @Autowired
     private OrderStatusRepository statusRepository;
-
     @Autowired
     private ProductVariantRepository variantRepository;
+    @Autowired
+    private PromotionRepository promotionRepository;
 
     public OrderDetailResponse createOrder(Integer userId, CreateOrderRequest request) {
-        // 1. Get cart
+        // 1. Lấy giỏ hàng
         Cart cart = cartRepository.findByUserUserId(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Giỏ hàng không tồn tại"));
 
@@ -49,81 +49,125 @@ public class OrderService {
             throw new BadRequestException("Giỏ hàng trống");
         }
 
-        // 2. Validate address
+        // 2. Kiểm tra địa chỉ
         UserAddress address = addressRepository.findById(request.getAddressId())
                 .orElseThrow(() -> new ResourceNotFoundException("Địa chỉ không tồn tại"));
 
-        if (!address.getUser().getUserId().equals(userId)) {
-            throw new BadRequestException("Địa chỉ không thuộc về bạn");
-        }
-
-        // 3. Validate payment method
+        // 3. Kiểm tra phương thức thanh toán
         PaymentMethod paymentMethod = paymentMethodRepository.findByPaymentMethodIdAndIsActiveTrue(request.getPaymentMethodId())
                 .orElseThrow(() -> new ResourceNotFoundException("Phương thức thanh toán không hợp lệ"));
 
-        // 4. Check stock for all items
-        for (CartItem item : cart.getItems()) {
-            if (!item.getVariant().hasStock(item.getQuantity())) {
-                throw new BadRequestException(
-                        "Sản phẩm '" + item.getVariant().getProduct().getProductName() +
-                                "' không đủ tồn kho. Còn lại: " + item.getVariant().getStockQuantity()
-                );
+        // 4. Kiểm tra Voucher (Mã giảm giá áp dụng cho tổng đơn)
+        Promotion appliedVoucher = null;
+        if (request.getPromoCode() != null && !request.getPromoCode().trim().isEmpty()) {
+            appliedVoucher = promotionRepository.findByPromoCode(request.getPromoCode())
+                    .orElseThrow(() -> new BadRequestException("Mã giảm giá không tồn tại"));
+            if (!appliedVoucher.isValid()) {
+                throw new BadRequestException("Mã giảm giá không còn hiệu lực");
             }
         }
 
-        // 5. Get PENDING status
+        // 5. Khởi tạo đơn hàng trạng thái PENDING
         OrderStatus pendingStatus = statusRepository.findByStatusName("PENDING")
-                .orElseThrow(() -> new RuntimeException("OrderStatus PENDING không tồn tại"));
+                .orElseThrow(() -> new RuntimeException("Trạng thái PENDING không tồn tại"));
 
-        // 6. Create order
         Order order = Order.builder()
                 .user(cart.getUser())
                 .address(address)
                 .paymentMethod(paymentMethod)
                 .status(pendingStatus)
+                .promotion(appliedVoucher)
                 .build();
 
         Order savedOrder = orderRepository.save(order);
 
-        // 7. Create order items and decrease stock
+        // 6. XỬ LÝ TỪNG SẢN PHẨM: Tự động áp dụng giảm giá lẻ (10%, 20%...)
         for (CartItem cartItem : cart.getItems()) {
-            // Create order item with snapshot
-            OrderItem orderItem = OrderItem.fromCartItem(cartItem, savedOrder);
+            ProductVariant variant = cartItem.getVariant();
+            BigDecimal originalPrice = variant.getPrice();
+
+            // --- LOGIC GIẢM GIÁ LINH HOẠT ---
+            // Tự động tìm khuyến mãi đang chạy cho riêng sản phẩm này
+            // (Bạn nên thêm method findActivePromotionForVariant vào PromotionRepository)
+            Promotion itemPromo = promotionRepository.findActivePromotionForVariant(variant.getVariantId())
+                    .orElse(null);
+
+            int discountPct = 0;
+            if (itemPromo != null && "PERCENT".equals(itemPromo.getDiscountType())) {
+                discountPct = itemPromo.getDiscountPercent(); // Lấy 10, 20 hoặc bất kỳ số nào từ DB
+            }
+
+            // Tính giá sau khi giảm (Làm tròn về 0 để khớp tiền VNĐ)
+            BigDecimal finalPrice = originalPrice.multiply(BigDecimal.valueOf(100 - discountPct))
+                    .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
+
+            // Lưu thông tin vào OrderItem
+            OrderItem orderItem = OrderItem.builder()
+                    .order(savedOrder)
+                    .variant(variant)
+                    .quantity(cartItem.getQuantity())
+                    .originalPrice(originalPrice)
+                    .discountPercent(discountPct)
+                    .finalPrice(finalPrice)
+                    .appliedPromotion(itemPromo) // Lưu vết khuyến mãi đã áp dụng
+                    .build();
+
             savedOrder.getItems().add(orderItem);
 
-            // Decrease stock
-            cartItem.getVariant().decreaseStock(cartItem.getQuantity());
-            variantRepository.save(cartItem.getVariant());
+            // Giảm tồn kho
+            variant.decreaseStock(cartItem.getQuantity());
+            variantRepository.save(variant);
         }
 
-        // 8. Calculate total amount
-        savedOrder.calculateTotalAmount();
+        // 7. TÍNH TỔNG TIỀN ĐƠN HÀNG
+        savedOrder.calculateTotalAmount(); // Tính tiền hàng (SubTotal)
 
-        // 9. Create status history
-        savedOrder.updateStatus(pendingStatus, "Đơn hàng được tạo");
+        // 8. Áp dụng giảm giá từ Voucher (Nếu có)
+        if (appliedVoucher != null) {
+            BigDecimal subTotal = savedOrder.getSubTotal();
+            if (subTotal.compareTo(appliedVoucher.getMinOrderAmount()) < 0) {
+                throw new BadRequestException("Đơn hàng chưa đạt giá trị tối thiểu để dùng Voucher này");
+            }
 
-        // 10. Clear cart
+            BigDecimal discountAmt = BigDecimal.ZERO;
+            if ("PERCENT".equals(appliedVoucher.getDiscountType())) {
+                discountAmt = subTotal.multiply(BigDecimal.valueOf(appliedVoucher.getDiscountPercent()))
+                        .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
+                if (appliedVoucher.getMaxDiscountAmount() != null && discountAmt.compareTo(appliedVoucher.getMaxDiscountAmount()) > 0) {
+                    discountAmt = appliedVoucher.getMaxDiscountAmount();
+                }
+            } else {
+                discountAmt = appliedVoucher.getMaxDiscountAmount(); // FIXED amount
+            }
+
+            savedOrder.setDiscountAmount(discountAmt);
+            savedOrder.calculateTotalAmount(); // Tính lại tổng cuối cùng
+
+            appliedVoucher.setUsedCount(appliedVoucher.getUsedCount() + 1);
+            promotionRepository.save(appliedVoucher);
+        }
+
+        // 9. Lưu lịch sử và xóa giỏ hàng
+        savedOrder.updateStatus(pendingStatus, "Khách hàng đặt đơn thành công");
         cart.clearCart();
         cartRepository.save(cart);
 
-        // 11. Save order
-        Order finalOrder = orderRepository.save(savedOrder);
-
-        return mapToDetailResponse(finalOrder);
+        return mapToDetailResponse(orderRepository.save(savedOrder));
     }
 
-    @Transactional(readOnly = true)
-    public Page<OrderResponse> getMyOrders(Integer userId, Pageable pageable) {
-        return orderRepository.findByUserUserId(userId, pageable)
-                .map(this::mapToResponse);
-    }
-
+    // Các hàm mapping giữ nguyên vì bạn đã viết rất ổn rồi
     @Transactional(readOnly = true)
     public OrderDetailResponse getOrderDetail(Integer userId, Integer orderId) {
         Order order = orderRepository.findByOrderIdAndUserUserId(orderId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Đơn hàng không tồn tại"));
-
         return mapToDetailResponse(order);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<OrderResponse> getMyOrders(Integer userId, Pageable pageable) {
+        // Gọi xuống Repository để lấy danh sách đơn hàng theo UserId và phân trang
+        return orderRepository.findByUserUserId(userId, pageable)
+                .map(this::mapToResponse); // Map từ Entity Order sang DTO OrderResponse
     }
 
     public void cancelOrder(Integer userId, Integer orderId) {
@@ -151,7 +195,9 @@ public class OrderService {
         orderRepository.save(order);
     }
 
-    // Mapping methods
+    // ============================================
+    // MAPPING METHODS
+    // ============================================
     private OrderResponse mapToResponse(Order order) {
         int totalItems = order.getItems() != null
                 ? order.getItems().stream().mapToInt(OrderItem::getQuantity).sum()
@@ -162,6 +208,8 @@ public class OrderService {
                 .userId(order.getUser().getUserId())
                 .statusName(order.getStatus().getStatusName())
                 .orderDate(order.getOrderDate())
+                .subTotal(order.getSubTotal())
+                .discountAmount(order.getDiscountAmount())
                 .totalAmount(order.getTotalAmount())
                 .totalItems(totalItems)
                 .paymentMethodName(order.getPaymentMethod().getMethodName())
@@ -187,15 +235,25 @@ public class OrderService {
                 .map(this::mapToHistoryResponse)
                 .collect(Collectors.toList());
 
+        // Lấy mã giảm giá nếu đơn này có dùng
+        String promoCodeUsed = null;
+        if (order.getPromotion() != null) {
+            promoCodeUsed = order.getPromotion().getPromoCode();
+        }
+
         return OrderDetailResponse.builder()
                 .orderId(order.getOrderId())
                 .userId(order.getUser().getUserId())
                 .userFullName(order.getUser().getFullName())
                 .userEmail(order.getUser().getEmail())
+                .userPhone(order.getUser().getPhone())
                 .deliveryAddress(order.getAddress().getFullAddress())
                 .paymentMethodName(order.getPaymentMethod().getMethodName())
                 .statusName(order.getStatus().getStatusName())
                 .orderDate(order.getOrderDate())
+                .subTotal(order.getSubTotal())
+                .discountAmount(order.getDiscountAmount())
+                .promoCode(promoCodeUsed)
                 .totalAmount(order.getTotalAmount())
                 .items(itemResponses)
                 .statusHistory(historyResponses)
@@ -214,6 +272,12 @@ public class OrderService {
                     .orElse(null);
         }
 
+        // Lấy tên CTKM nếu sản phẩm này được giảm giá trực tiếp
+        String promotionName = null;
+        if (item.getAppliedPromotion() != null) {
+            promotionName = item.getAppliedPromotion().getPromotionName();
+        }
+
         return OrderItemResponse.builder()
                 .orderItemId(item.getOrderItemId())
                 .variantId(variant.getVariantId())
@@ -223,12 +287,14 @@ public class OrderService {
                 .quantity(item.getQuantity())
                 .originalPrice(item.getOriginalPrice())
                 .discountPercent(item.getDiscountPercent())
+                .appliedPromotionName(promotionName)
                 .finalPrice(item.getFinalPrice())
                 .subtotal(item.getSubtotal())
                 .imageUrl(imageUrl)
                 .build();
     }
 
+    // Hàm bị thiếu đã được thêm vào đây
     private OrderStatusHistoryResponse mapToHistoryResponse(OrderStatusHistory history) {
         return OrderStatusHistoryResponse.builder()
                 .historyId(history.getHistoryId())
@@ -247,6 +313,7 @@ public class OrderService {
         return orderRepository.findAll(pageable)
                 .map(this::mapToResponse);
     }
+
 
     @Transactional(readOnly = true)
     public OrderDetailResponse getOrderDetailAdmin(Integer orderId) {

@@ -12,11 +12,15 @@ import com.ballhub.ballhub_backend.exception.BadRequestException;
 import com.ballhub.ballhub_backend.exception.ResourceNotFoundException;
 import com.ballhub.ballhub_backend.repository.CartItemRepository;
 import com.ballhub.ballhub_backend.repository.CartRepository;
+import com.ballhub.ballhub_backend.repository.ProductRepository;
 import com.ballhub.ballhub_backend.repository.ProductVariantRepository;
 import com.ballhub.ballhub_backend.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -36,6 +40,10 @@ public class CartService {
     @Autowired
     private UserRepository userRepository;
 
+    // --- IMPORT THÊM PRODUCT REPOSITORY ĐỂ CHECK FLASH SALE ---
+    @Autowired
+    private ProductRepository productRepository;
+
     @Transactional(readOnly = true)
     public CartResponse getCart(Integer userId) {
         Cart cart = getOrCreateCart(userId);
@@ -43,19 +51,15 @@ public class CartService {
     }
 
     public CartResponse addToCart(Integer userId, AddToCartRequest request) {
-        // Get or create cart
         Cart cart = getOrCreateCart(userId);
 
-        // Get variant
         ProductVariant variant = variantRepository.findByVariantIdAndStatusTrue(request.getVariantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Sản phẩm không tồn tại"));
 
-        // Check stock
         if (!variant.hasStock(request.getQuantity())) {
             throw new BadRequestException("Không đủ tồn kho. Còn lại: " + variant.getStockQuantity());
         }
 
-        // Add to cart
         cart.addItem(variant, request.getQuantity());
         Cart savedCart = cartRepository.save(cart);
 
@@ -69,17 +73,14 @@ public class CartService {
         CartItem cartItem = cartItemRepository.findById(cartItemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cart item không tồn tại"));
 
-        // Verify cart item belongs to user's cart
         if (!cartItem.getCart().getCartId().equals(cart.getCartId())) {
             throw new BadRequestException("Cart item không thuộc về giỏ hàng của bạn");
         }
 
-        // Check stock
         if (!cartItem.getVariant().hasStock(request.getQuantity())) {
             throw new BadRequestException("Không đủ tồn kho. Còn lại: " + cartItem.getVariant().getStockQuantity());
         }
 
-        // Update quantity
         cartItem.setQuantity(request.getQuantity());
         cartItemRepository.save(cartItem);
 
@@ -93,12 +94,10 @@ public class CartService {
         CartItem cartItem = cartItemRepository.findById(cartItemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cart item không tồn tại"));
 
-        // Verify ownership
         if (!cartItem.getCart().getCartId().equals(cart.getCartId())) {
             throw new BadRequestException("Cart item không thuộc về giỏ hàng của bạn");
         }
 
-        // Remove item
         cart.getItems().remove(cartItem);
         cartItemRepository.delete(cartItem);
 
@@ -137,12 +136,17 @@ public class CartService {
                 .map(this::mapToItemResponse)
                 .collect(Collectors.toList());
 
+        // --- TÍNH TỔNG TIỀN DỰA TRÊN THÀNH TIỀN ĐÃ SALE (Thay vì lấy cart.getTotalAmount() cũ) ---
+        BigDecimal dynamicTotalAmount = itemResponses.stream()
+                .map(CartItemResponse::getSubtotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
         return CartResponse.builder()
                 .cartId(cart.getCartId())
                 .userId(cart.getUser().getUserId())
                 .items(itemResponses)
                 .totalItems(cart.getTotalItems())
-                .totalAmount(cart.getTotalAmount())
+                .totalAmount(dynamicTotalAmount)
                 .build();
     }
 
@@ -158,16 +162,34 @@ public class CartService {
                     .orElse(null);
         }
 
+        // --- ÁP DỤNG LOGIC FLASH SALE ---
+        BigDecimal basePrice = variant.getPrice();
+        BigDecimal dynamicFinalPrice = variant.getFinalPrice();
+
+        Integer activePercent = null;
+        if (variant.getProduct() != null) {
+            activePercent = productRepository.findActiveFlashSalePercentByProductId(variant.getProduct().getProductId());
+        }
+        int discountPct = activePercent != null ? activePercent : 0;
+
+        if (discountPct > 0) {
+            BigDecimal multiplier = BigDecimal.valueOf(100 - discountPct).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            dynamicFinalPrice = basePrice.multiply(multiplier);
+        }
+
+        BigDecimal dynamicSubtotal = dynamicFinalPrice.multiply(BigDecimal.valueOf(item.getQuantity()));
+        // ---------------------------------
+
         return CartItemResponse.builder()
                 .cartItemId(item.getCartItemId())
                 .variantId(variant.getVariantId())
                 .productName(variant.getProduct() != null ? variant.getProduct().getProductName() : null)
                 .sizeName(variant.getSize() != null ? variant.getSize().getSizeName() : null)
                 .colorName(variant.getColor() != null ? variant.getColor().getColorName() : null)
-                .price(variant.getPrice())
-                .finalPrice(variant.getFinalPrice())
+                .price(basePrice)
+                .finalPrice(dynamicFinalPrice) // Giá 1 sản phẩm đã trừ Sale
                 .quantity(item.getQuantity())
-                .subtotal(item.getSubtotal())
+                .subtotal(dynamicSubtotal)     // Thành tiền đã trừ Sale
                 .imageUrl(imageUrl)
                 .stockQuantity(variant.getStockQuantity())
                 .build();

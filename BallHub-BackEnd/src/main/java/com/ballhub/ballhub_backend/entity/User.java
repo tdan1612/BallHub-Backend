@@ -27,11 +27,14 @@ public class User {
     @Column(name = "Email", length = 150, unique = true, nullable = false)
     private String email;
 
-    @Column(name = "PasswordHash", length = 255, nullable = false)
+    @Column(name = "PasswordHash", length = 255)
     private String passwordHash;
 
     @Column(name = "Phone", length = 20)
     private String phone;
+
+    @Column(name = "Avatar")
+    private String avatar;
 
     @Column(name = "Role", length = 20)
     private String role = "CUSTOMER";

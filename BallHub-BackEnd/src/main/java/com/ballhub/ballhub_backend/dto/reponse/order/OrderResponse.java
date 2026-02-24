@@ -18,7 +18,13 @@ public class OrderResponse {
     private Integer userId;
     private String statusName;
     private LocalDateTime orderDate;
-    private BigDecimal totalAmount;
+
+    // --- BỔ SUNG CHO KHUYẾN MÃI ---
+    private BigDecimal subTotal;       // Tổng tiền hàng trước giảm
+    private BigDecimal discountAmount; // Số tiền được voucher giảm
+    // ------------------------------
+
+    private BigDecimal totalAmount;    // Tiền cuối cùng phải trả
     private Integer totalItems;
     private String paymentMethodName;
 }
